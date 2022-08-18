@@ -198,7 +198,7 @@ class PSUControl(octoprint.plugin.StartupPlugin,
             try:
                 pin = periphery.CdevGPIO(path=self.config['GPIODevice'], line=self.config['senseGPIOPin'], direction='in', bias=bias)
                 self._configuredGPIOPins['sense'] = pin
-                invert_sense = self.gpio['invertsenseGPIOPin']
+                invert_sense = self.config['invertsenseGPIOPin']
                 initial_sense = not pin.read() if invert_sense else pin.read()
                 initial_state = 'ON' if initial_sense else 'OFF'
                 self._logger.info("Detected initial PSU state {}".format(initial_state))
