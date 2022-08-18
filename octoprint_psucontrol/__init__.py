@@ -176,28 +176,11 @@ class PSUControl(octoprint.plugin.StartupPlugin,
 
     def configure_gpio(self):
         self._logger.info("Periphery version: {}".format(periphery.version))
-
-        if self.config['switchingMethod'] == 'GPIO':
-            self._logger.info("Using GPIO for On/Off")
-            self._logger.info("Configuring GPIO for pin {}".format(self.config['onoffGPIOPin']))
-
-            if not self.config['invertonoffGPIOPin']:
-                initial_output = 'low'
-            else:
-                initial_output = 'high'
-
-            try:
-                pin = periphery.GPIO(self.config['GPIODevice'], self.config['onoffGPIOPin'], initial_output)
-                self._configuredGPIOPins['switch'] = pin
-            except Exception:
-                self._logger.exception(
-                    "Exception while setting up GPIO pin {}".format(self.config['onoffGPIOPin'])
-                )
+        initial_state = None
 
         if self.config['sensingMethod'] == 'GPIO':
             self._logger.info("Using GPIO sensing to determine PSU on/off state.")
             self._logger.info("Configuring GPIO for pin {}".format(self.config['senseGPIOPin']))
-
 
             if not SUPPORTS_LINE_BIAS:
                 if self.config['senseGPIOPinPUD'] != '':
@@ -215,9 +198,31 @@ class PSUControl(octoprint.plugin.StartupPlugin,
             try:
                 pin = periphery.CdevGPIO(path=self.config['GPIODevice'], line=self.config['senseGPIOPin'], direction='in', bias=bias)
                 self._configuredGPIOPins['sense'] = pin
+                invert_sense = self.gpio['invertsenseGPIOPin']
+                initial_sense = not pin.read() if invert_sense else pin.read()
+                initial_state = 'ON' if initial_sense else 'OFF'
+                self._logger.info("Detected initial PSU state {}".format(initial_state))
             except Exception:
                 self._logger.exception(
                     "Exception while setting up GPIO pin {}".format(self.config['senseGPIOPin'])
+                )
+
+        if self.config['switchingMethod'] == 'GPIO':
+            self._logger.info("Using GPIO for On/Off")
+            self._logger.info("Configuring GPIO for pin {}".format(self.config['onoffGPIOPin']))
+            # do not switch off printer if ON from sense following Octoprint restart
+            invert_switch = self.config['invertonoffGPIOPin']
+            if initial_state != 'ON':
+                initial_output = 'high' if invert_switch else 'low'
+            else:
+                initial_output = 'low' if invert_switch else 'high'
+
+            try:
+                pin = periphery.GPIO(self.config['GPIODevice'], self.config['onoffGPIOPin'], initial_output)
+                self._configuredGPIOPins['switch'] = pin
+            except Exception:
+                self._logger.exception(
+                    "Exception while setting up GPIO pin {}".format(self.config['onoffGPIOPin'])
                 )
 
 
@@ -537,6 +542,10 @@ class PSUControl(octoprint.plugin.StartupPlugin,
 
                 self._logger.debug("Off system command returned: {}".format(r))
             elif self.config['switchingMethod'] == 'GPIO':
+                if self.config['disconnectOnPowerOff']:
+                    self._printer.disconnect()
+                else:
+                    self._logger.warning("Removing power while connected may crash Octoprint resulting in unexpected state")
                 self._logger.debug("Switching PSU Off Using GPIO: {}".format(self.config['onoffGPIOPin']))
                 pin_output = bool(0 ^ self.config['invertonoffGPIOPin'])
 
@@ -568,7 +577,7 @@ class PSUControl(octoprint.plugin.StartupPlugin,
                         )
                         return
 
-            if self.config['disconnectOnPowerOff']:
+            if self.config['disconnectOnPowerOff'] and not self._printer.is_closed_or_error():
                 self._printer.disconnect()
 
             if self.config['sensingMethod'] not in ('GPIO', 'SYSTEM', 'PLUGIN'):
